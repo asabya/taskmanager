@@ -253,15 +253,18 @@ func (m *TaskManager) handleError(id int32, t Task, err error) {
 
 			m.taskMap[t.Name()] = oldTask
 			m.tMpMutex.Unlock()
-			m.Go(t)
-			log.Infof("restarted task %s on err %s", t.Name(), err.Error())
-			return
+			_, e := m.Go(t)
+			if e == nil {
+				log.Infof("restarted task %s on err %s", t.Name(), err.Error())
+				return
+			} else {
+				log.Errorf("failed restarting task err: %s", e.Error())
+			}
 		}
 	}
 	m.tMpMutex.Lock()
 	delete(m.taskMap, t.Name())
 	m.tMpMutex.Unlock()
-	return
 }
 
 func (m *TaskManager) handleSuccess(id int32, t Task) {

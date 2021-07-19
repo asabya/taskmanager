@@ -74,7 +74,7 @@ func (t *testTask) Description() string {
 }
 
 func TestTaskManager(t *testing.T) {
-	logging.SetLogLevel("taskmanager", "Debug")
+	_ = logging.SetLogLevel("taskmanager", "Debug")
 
 	t.Run("initial state", func(t *testing.T) {
 		tm := taskmanager.New(1, 3, time.Second)

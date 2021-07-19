@@ -1,4 +1,4 @@
-# taskmanager
+# taskmanager [![Go](https://github.com/plexsysio/taskmanager/workflows/Go/badge.svg)](https://github.com/plexsysio/taskmanager/actions) [![Go Reference](https://pkg.go.dev/badge/github.com/plexsysio/taskmanager.svg)](https://pkg.go.dev/github.com/plexsysio/taskmanager) [![Coverage Status](https://coveralls.io/repos/github/plexsysio/taskmanager/badge.svg?branch=master)](https://coveralls.io/github/plexsysio/taskmanager?branch=master)
 
 Async task manager. Tasks can easily be customized and executed asynchronously on
 the next available worker.
