@@ -253,10 +253,12 @@ func (m *TaskManager) handleError(id int32, t Task, err error) {
 
 			m.taskMap[t.Name()] = oldTask
 			m.tMpMutex.Unlock()
-			_, err = m.Go(t)
-			if err == nil {
+			_, e := m.Go(t)
+			if e == nil {
 				log.Infof("restarted task %s on err %s", t.Name(), err.Error())
 				return
+			} else {
+				log.Errorf("failed restarting task err: %s", e.Error())
 			}
 		}
 	}
