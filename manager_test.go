@@ -92,7 +92,7 @@ func TestTaskManager(t *testing.T) {
 
 	t.Run("add tasks", func(t *testing.T) {
 		tm := taskmanager.New(1, 3, time.Second)
-		defer tm.Stop()
+		defer tm.Stop(context.Background())
 
 		t1 := newTestTask("1")
 		goWork(t1, tm)
@@ -118,7 +118,7 @@ func TestTaskManager(t *testing.T) {
 
 	t.Run("add more than capacity", func(t *testing.T) {
 		tm := taskmanager.New(1, 3, time.Second)
-		defer tm.Stop()
+		defer tm.Stop(context.Background())
 
 		t1 := newTestTask("1")
 		t2 := newTestTask("2")
@@ -136,7 +136,7 @@ func TestTaskManager(t *testing.T) {
 
 		time.Sleep(time.Millisecond * 100)
 		verifyWorkerCount(t, tm, 3)
-		verifyTaskStatus(t, tm, t4.Name(), "not running")
+		verifyTaskStatus(t, tm, t4.Name(), "not assigned")
 
 		t1.stop(nil)
 		<-sched
@@ -152,7 +152,7 @@ func TestTaskManager(t *testing.T) {
 
 	t.Run("fail duplicate", func(t *testing.T) {
 		tm := taskmanager.New(1, 3, time.Second)
-		defer tm.Stop()
+		defer tm.Stop(context.Background())
 
 		t1 := newTestTask("1")
 		t2 := newTestTask("1")
@@ -169,7 +169,7 @@ func TestTaskManager(t *testing.T) {
 
 	t.Run("restart on error", func(t *testing.T) {
 		tm := taskmanager.New(1, 3, time.Second)
-		defer tm.Stop()
+		defer tm.Stop(context.Background())
 
 		t1 := newTestTask("1")
 		goWork(t1, tm)
@@ -194,7 +194,7 @@ func TestTaskManager(t *testing.T) {
 
 	t.Run("recover and restart on panic", func(t *testing.T) {
 		tm := taskmanager.New(1, 3, time.Second)
-		defer tm.Stop()
+		defer tm.Stop(context.Background())
 
 		t1 := newTestTask("1")
 		goWork(t1, tm)
@@ -217,7 +217,7 @@ func TestTaskManager(t *testing.T) {
 
 	t.Run("with progress", func(t *testing.T) {
 		tm := taskmanager.New(1, 3, time.Second)
-		defer tm.Stop()
+		defer tm.Stop(context.Background())
 
 		t1 := newTestTask("1")
 		goWork(t1, tm)
@@ -245,7 +245,7 @@ func TestTaskManager(t *testing.T) {
 
 	t.Run("closure", func(t *testing.T) {
 		tm := taskmanager.New(1, 3, time.Second)
-		defer tm.Stop()
+		defer tm.Stop(context.Background())
 
 		closer := make(chan struct{})
 		sched, err := tm.GoFunc("closure", func(ctx context.Context) error {
@@ -269,7 +269,7 @@ func TestTaskManager(t *testing.T) {
 
 	t.Run("timeout", func(t *testing.T) {
 		tm := taskmanager.New(1, 3, time.Second)
-		defer tm.Stop()
+		defer tm.Stop(context.Background())
 
 		t1 := newTestTask("1")
 		goWork(t1, tm)
@@ -323,15 +323,11 @@ func TestTaskManager(t *testing.T) {
 		verifyTaskStatus(t, tm, t2.Name(), "running")
 		verifyTaskStatus(t, tm, t3.Name(), "running")
 
-		stopped := make(chan struct{})
-		go func() {
-			defer close(stopped)
-			tm.Stop()
-		}()
-		select {
-		case <-stopped:
-		case <-time.After(time.Second * 3):
-			t.Fatal("waited 3 seconds for taskmanager to stop")
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+		defer cancel()
+		err := tm.Stop(ctx)
+		if err != nil {
+			t.Fatalf("failed to stop taskmanager %s", err.Error())
 		}
 		verifyWorkerCount(t, tm, 0)
 	})
@@ -343,7 +339,7 @@ func verifyAllIdle(t *testing.T, tm *taskmanager.TaskManager) {
 		if v.TaskName != "idle" {
 			t.Fatalf("invalid taskname exp idle found %s", v.TaskName)
 		}
-		if v.Status != "waiting" {
+		if v.Status != taskmanager.Waiting {
 			t.Fatalf("invalid taskstatus exp waiting found %s", v.Status)
 		}
 	}
@@ -365,7 +361,7 @@ func verifyWorkerInfo(t *testing.T, tm *taskmanager.TaskManager, wId int32, tNam
 	if st.TaskName != tName {
 		t.Fatalf("invalid task name in worker info exp %s found %s", tName, st.TaskName)
 	}
-	if st.Status != state {
+	if st.Status != taskmanager.WorkerStatus(state) {
 		t.Fatalf("invalid status in worker info exp %s found %s", state, st.Status)
 	}
 }
@@ -376,7 +372,7 @@ func verifyTaskStatus(t *testing.T, tm *taskmanager.TaskManager, tName, state st
 	if !ok {
 		t.Fatal("task status not present")
 	}
-	if ts.WorkerStatus != state {
-		t.Fatalf("worker state incorrect exp %s found %s", state, ts.WorkerStatus)
+	if ts.Status != taskmanager.WorkerStatus(state) {
+		t.Fatalf("worker state incorrect exp %s found %s", state, ts.Status)
 	}
 }

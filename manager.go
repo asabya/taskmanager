@@ -1,14 +1,18 @@
+// Package taskmanager implements an async task manager. Structured tasks can be executed asynchronously
+// on pre-provisioned workers. Alternatively functions could also be enqueued. Taskmanager can be stopped
+// and all the workers/functions will receive a `Done` signal on the context passed. This needs to be handled
+// in the task logic in order to clean up properly.
 package taskmanager
 
 import (
 	"context"
 	"errors"
-	"go.uber.org/atomic"
 	"math"
 	"sync"
 	"time"
 
 	logging "github.com/ipfs/go-log/v2"
+	"go.uber.org/atomic"
 )
 
 var log = logging.Logger("taskmanager")
@@ -29,28 +33,50 @@ type TaskWithProgress interface {
 	Description() string
 }
 
-// RestarableTask interface can be implemented to restart tasks on failures
+// RestarableTask interface can be implemented to restart tasks on failures. The error
+// passed to Restart is the error with which the task failed previously. Appropriate
+// handling can be done based on that. If restart returns true, the task is enqueued
+// with the manager again.
 type RestartableTask interface {
 	Task
 
 	Restart(context.Context, error) bool
 }
 
-type TaskStatus struct {
-	task         Task
-	Name         string
-	Worker       int32
-	WorkerStatus string
-	Description  string
-	Progress     float64
-	Restarts     int
+// WorkerStatus is helper type for restricting the string values of worker status to
+// known constants
+type WorkerStatus string
+
+func (w WorkerStatus) String() string {
+	return string(w)
 }
 
+const (
+	NotAssigned WorkerStatus = "not assigned"
+	Waiting     WorkerStatus = "waiting"
+	Running     WorkerStatus = "running"
+	Restarted   WorkerStatus = "restarted"
+)
+
+// TaskStatus is the status saved for the task. This status can be accessed using the
+// TaskStatus() function
+type TaskStatus struct {
+	task        Task
+	Name        string
+	Worker      int32
+	Status      WorkerStatus
+	Description string
+	Progress    float64
+	Restarts    int
+}
+
+// WorkerInfo shows information on the worker
 type WorkerInfo struct {
 	TaskName string
-	Status   string
+	Status   WorkerStatus
 }
 
+// TaskManager implements the public API for taskmanager
 type TaskManager struct {
 	taskQueue     chan chan Task
 	wmMutex       sync.Mutex
@@ -61,12 +87,16 @@ type TaskManager struct {
 	cancel        context.CancelFunc
 	wg            sync.WaitGroup
 	running       atomic.Int32
+	workerId      atomic.Int32
 	max           int
 	min           int
 	workerTimeout time.Duration
 	stopped       atomic.Bool
 }
 
+// New creates a new taskmanager instance. minCount determines the minimum no of
+// workers and maxCount determines the maximum worker count. timeout is used to determine
+// when workers will be timed out on being idle
 func New(minCount, maxCount int, timeout time.Duration) *TaskManager {
 	ctx, cancel := context.WithCancel(context.Background())
 	manager := &TaskManager{
@@ -84,19 +114,17 @@ func New(minCount, maxCount int, timeout time.Duration) *TaskManager {
 	return manager
 }
 
-var workerId atomic.Int32
-
 func (m *TaskManager) addWorkers(count int) {
-	m.wmMutex.Lock()
-	defer m.wmMutex.Unlock()
 	for i := 0; i < count && !m.stopped.Load(); i++ {
 		if int(m.running.Load()) >= m.max {
 			log.Info("reached max allowed workers while adding")
 			return
 		}
-		currentId := workerId.Inc()
+		currentId := m.workerId.Inc()
 		log.Infof("starting worker : %d", currentId)
-		m.workerMap[currentId] = WorkerInfo{TaskName: "idle", Status: "waiting"}
+		m.wmMutex.Lock()
+		m.workerMap[currentId] = WorkerInfo{TaskName: "idle", Status: Waiting}
+		m.wmMutex.Unlock()
 		m.running.Inc()
 		m.wg.Add(1)
 		w := newWorker(currentId, m)
@@ -106,23 +134,26 @@ func (m *TaskManager) addWorkers(count int) {
 
 var ErrAlreadyExists = errors.New("task with same name already exists")
 
+// Go enqueues the task to taskmanager. The function returns an error if we try
+// to enqueue a task with the same name. The channel returned is closed when the
+// task is actually assigned a worker.
 func (m *TaskManager) Go(newTask Task) (<-chan struct{}, error) {
 	m.tMpMutex.Lock()
 	curr, exists := m.taskMap[newTask.Name()]
-	if exists && curr.WorkerStatus != "restarted" {
+	if exists && curr.Status != Restarted {
 		m.tMpMutex.Unlock()
 		log.Errorf("trying to enqueue same task. Not allowed.")
 		return nil, ErrAlreadyExists
 	}
 	restarts := 0
-	if exists && curr.WorkerStatus == "restarted" {
+	if exists && curr.Status == Restarted {
 		restarts = curr.Restarts
 	}
 	m.taskMap[newTask.Name()] = TaskStatus{
-		Name:         newTask.Name(),
-		WorkerStatus: "not running",
-		Restarts:     restarts,
-		task:         newTask,
+		Name:     newTask.Name(),
+		Status:   NotAssigned,
+		Restarts: restarts,
+		task:     newTask,
 	}
 	m.tMpMutex.Unlock()
 
@@ -174,29 +205,13 @@ func (c *closureTask) Execute(ctx context.Context) error {
 	return c.closure(ctx)
 }
 
+// GoFunc is used to enqueue a closure to the taskmanager. key should be unique for each closure.
+// If another closure with the same key is enqueued, we get an error.
 func (m *TaskManager) GoFunc(key string, closure func(ctx context.Context) error) (<-chan struct{}, error) {
 	return m.Go(&closureTask{key, closure})
 }
 
-func (m *TaskManager) updateState(wId int32, name, status string) {
-	m.wmMutex.Lock()
-	m.workerMap[wId] = WorkerInfo{TaskName: name, Status: status}
-	m.wmMutex.Unlock()
-
-	m.tMpMutex.Lock()
-	oldStatus, exists := m.taskMap[name]
-	if exists {
-		m.taskMap[name] = TaskStatus{
-			Name:         name,
-			Worker:       wId,
-			WorkerStatus: status,
-			Restarts:     oldStatus.Restarts,
-			task:         oldStatus.task,
-		}
-	}
-	m.tMpMutex.Unlock()
-}
-
+// Status is used to obtain the status of workers in taskmanager
 func (m *TaskManager) Status() (res map[int32]WorkerInfo) {
 	m.wmMutex.Lock()
 	defer m.wmMutex.Unlock()
@@ -207,16 +222,17 @@ func (m *TaskManager) Status() (res map[int32]WorkerInfo) {
 	return res
 }
 
+// TaskStatus is used to obtain status of tasks enqueued
 func (m *TaskManager) TaskStatus() (res map[string]TaskStatus) {
 	m.tMpMutex.Lock()
 	defer m.tMpMutex.Unlock()
 	res = make(map[string]TaskStatus)
 	for k, v := range m.taskMap {
 		status := TaskStatus{
-			Name:         v.Name,
-			Worker:       v.Worker,
-			WorkerStatus: v.WorkerStatus,
-			Restarts:     v.Restarts,
+			Name:     v.Name,
+			Worker:   v.Worker,
+			Status:   v.Status,
+			Restarts: v.Restarts,
 		}
 		if progTask, ok := v.task.(TaskWithProgress); ok {
 			status.Progress, _ = progTask.Progress()
@@ -227,21 +243,51 @@ func (m *TaskManager) TaskStatus() (res map[string]TaskStatus) {
 	return res
 }
 
-func (m *TaskManager) Stop() {
+// Stop is used to stop all running routines
+func (m *TaskManager) Stop(ctx context.Context) error {
 	log.Info("stopping taskmanager")
 	m.cancel()
 	m.stopped.Store(true)
-	m.wg.Wait()
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		m.wg.Wait()
+	}()
+	select {
+	case <-ctx.Done():
+		return errors.New("failed to stop taskmanager")
+	case <-stopped:
+		return nil
+	}
+}
+
+func (m *TaskManager) updateState(wId int32, name string, status WorkerStatus) {
+	m.wmMutex.Lock()
+	m.workerMap[wId] = WorkerInfo{TaskName: name, Status: status}
+	m.wmMutex.Unlock()
+
+	m.tMpMutex.Lock()
+	oldStatus, exists := m.taskMap[name]
+	if exists {
+		m.taskMap[name] = TaskStatus{
+			Name:     name,
+			Worker:   wId,
+			Status:   status,
+			Restarts: oldStatus.Restarts,
+			task:     oldStatus.task,
+		}
+	}
+	m.tMpMutex.Unlock()
 }
 
 func (m *TaskManager) handleStart(id int32, tName string) {
 	log.Infof("worker %d started running task %s", id, tName)
-	m.updateState(id, tName, "running")
+	m.updateState(id, tName, Running)
 }
 
 func (m *TaskManager) handleError(id int32, t Task, err error) {
 	log.Infof("worker %d had error %s running task %s", id, err.Error(), t.Name())
-	m.updateState(id, "idle", "waiting")
+	m.updateState(id, "idle", Waiting)
 	if r, ok := t.(RestartableTask); ok && !errors.Is(err, context.Canceled) {
 		if r.Restart(m.context, err) {
 			m.tMpMutex.Lock()
@@ -249,7 +295,7 @@ func (m *TaskManager) handleError(id int32, t Task, err error) {
 			oldTask := m.taskMap[t.Name()]
 			oldTask.Restarts++
 			oldTask.Worker = 0
-			oldTask.WorkerStatus = "restarted"
+			oldTask.Status = Restarted
 
 			m.taskMap[t.Name()] = oldTask
 			m.tMpMutex.Unlock()
@@ -269,7 +315,7 @@ func (m *TaskManager) handleError(id int32, t Task, err error) {
 
 func (m *TaskManager) handleSuccess(id int32, t Task) {
 	log.Infof("worker %d successfully completed task %s", id, t.Name())
-	m.updateState(id, "idle", "waiting")
+	m.updateState(id, "idle", Waiting)
 	m.tMpMutex.Lock()
 	delete(m.taskMap, t.Name())
 	m.tMpMutex.Unlock()
