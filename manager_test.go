@@ -78,6 +78,9 @@ func TestTaskManager(t *testing.T) {
 
 	t.Run("initial state", func(t *testing.T) {
 		tm := taskmanager.New(1, 3, time.Second)
+		defer func() {
+			_ = tm.Stop(context.Background())
+		}()
 		verifyWorkerCount(t, tm, 1)
 		verifyWorkerInfo(t, tm, 1, "idle", "waiting")
 	})
@@ -92,7 +95,9 @@ func TestTaskManager(t *testing.T) {
 
 	t.Run("add tasks", func(t *testing.T) {
 		tm := taskmanager.New(1, 3, time.Second)
-		defer tm.Stop(context.Background())
+		defer func() {
+			_ = tm.Stop(context.Background())
+		}()
 
 		t1 := newTestTask("1")
 		goWork(t1, tm)
@@ -118,7 +123,9 @@ func TestTaskManager(t *testing.T) {
 
 	t.Run("add more than capacity", func(t *testing.T) {
 		tm := taskmanager.New(1, 3, time.Second)
-		defer tm.Stop(context.Background())
+		defer func() {
+			_ = tm.Stop(context.Background())
+		}()
 
 		t1 := newTestTask("1")
 		t2 := newTestTask("2")
@@ -152,7 +159,9 @@ func TestTaskManager(t *testing.T) {
 
 	t.Run("fail duplicate", func(t *testing.T) {
 		tm := taskmanager.New(1, 3, time.Second)
-		defer tm.Stop(context.Background())
+		defer func() {
+			_ = tm.Stop(context.Background())
+		}()
 
 		t1 := newTestTask("1")
 		t2 := newTestTask("1")
@@ -169,7 +178,9 @@ func TestTaskManager(t *testing.T) {
 
 	t.Run("restart on error", func(t *testing.T) {
 		tm := taskmanager.New(1, 3, time.Second)
-		defer tm.Stop(context.Background())
+		defer func() {
+			_ = tm.Stop(context.Background())
+		}()
 
 		t1 := newTestTask("1")
 		goWork(t1, tm)
@@ -194,7 +205,9 @@ func TestTaskManager(t *testing.T) {
 
 	t.Run("recover and restart on panic", func(t *testing.T) {
 		tm := taskmanager.New(1, 3, time.Second)
-		defer tm.Stop(context.Background())
+		defer func() {
+			_ = tm.Stop(context.Background())
+		}()
 
 		t1 := newTestTask("1")
 		goWork(t1, tm)
@@ -217,7 +230,9 @@ func TestTaskManager(t *testing.T) {
 
 	t.Run("with progress", func(t *testing.T) {
 		tm := taskmanager.New(1, 3, time.Second)
-		defer tm.Stop(context.Background())
+		defer func() {
+			_ = tm.Stop(context.Background())
+		}()
 
 		t1 := newTestTask("1")
 		goWork(t1, tm)
@@ -245,7 +260,9 @@ func TestTaskManager(t *testing.T) {
 
 	t.Run("closure", func(t *testing.T) {
 		tm := taskmanager.New(1, 3, time.Second)
-		defer tm.Stop(context.Background())
+		defer func() {
+			_ = tm.Stop(context.Background())
+		}()
 
 		closer := make(chan struct{})
 		sched, err := tm.GoFunc("closure", func(ctx context.Context) error {
@@ -269,7 +286,9 @@ func TestTaskManager(t *testing.T) {
 
 	t.Run("timeout", func(t *testing.T) {
 		tm := taskmanager.New(1, 3, time.Second)
-		defer tm.Stop(context.Background())
+		defer func() {
+			_ = tm.Stop(context.Background())
+		}()
 
 		t1 := newTestTask("1")
 		goWork(t1, tm)
