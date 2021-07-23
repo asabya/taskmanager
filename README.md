@@ -51,8 +51,11 @@ func main() {
    }
 
    // Task scheduled
-   <-sched:
-
+   <-sched
+   
+```
+Closures can also be scheduled
+```
    fSched, err := tm.GoFunc(func(ctx context.Context) error {
       for {
          select {
