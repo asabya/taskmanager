@@ -11,11 +11,8 @@ import (
 	"sync"
 	"time"
 
-	logging "github.com/ipfs/go-log/v2"
 	"go.uber.org/atomic"
 )
-
-var log = logging.Logger("taskmanager")
 
 // Task defines the interface to be implemented by users to enqueue tasks to the
 // TaskManager
@@ -92,12 +89,14 @@ type TaskManager struct {
 	min           int
 	workerTimeout time.Duration
 	stopped       atomic.Bool
+
+	logging Logger
 }
 
 // New creates a new taskmanager instance. minCount determines the minimum no of
 // workers and maxCount determines the maximum worker count. timeout is used to determine
 // when workers will be timed out on being idle
-func New(minCount, maxCount int, timeout time.Duration) *TaskManager {
+func New(minCount, maxCount int, timeout time.Duration, log Logger) *TaskManager {
 	ctx, cancel := context.WithCancel(context.Background())
 	manager := &TaskManager{
 		taskQueue:     make(chan chan Task, maxCount),
@@ -108,6 +107,7 @@ func New(minCount, maxCount int, timeout time.Duration) *TaskManager {
 		min:           minCount,
 		max:           maxCount,
 		workerTimeout: timeout,
+		logging:       log,
 	}
 	manager.addWorkers(minCount)
 
@@ -117,17 +117,17 @@ func New(minCount, maxCount int, timeout time.Duration) *TaskManager {
 func (m *TaskManager) addWorkers(count int) {
 	for i := 0; i < count && !m.stopped.Load(); i++ {
 		if int(m.running.Load()) >= m.max {
-			log.Info("reached max allowed workers while adding")
+			m.logging.Info("reached max allowed workers while adding")
 			return
 		}
 		currentId := m.workerId.Inc()
-		log.Infof("starting worker : %d", currentId)
+		m.logging.Infof("starting worker : %d", currentId)
 		m.wmMutex.Lock()
 		m.workerMap[currentId] = WorkerInfo{TaskName: "idle", Status: Waiting}
 		m.wmMutex.Unlock()
 		m.running.Inc()
 		m.wg.Add(1)
-		w := newWorker(currentId, m)
+		w := newWorker(currentId, m, m.logging)
 		w.start()
 	}
 }
@@ -142,7 +142,7 @@ func (m *TaskManager) Go(newTask Task) (<-chan struct{}, error) {
 	curr, exists := m.taskMap[newTask.Name()]
 	if exists && curr.Status != Restarted {
 		m.tMpMutex.Unlock()
-		log.Errorf("trying to enqueue same task. Not allowed.")
+		m.logging.Errorf("trying to enqueue same task. Not allowed.")
 		return nil, ErrAlreadyExists
 	}
 	restarts := 0
@@ -166,11 +166,11 @@ func (m *TaskManager) Go(newTask Task) (<-chan struct{}, error) {
 				current := int(m.running.Load())
 				if m.max > current {
 					newWorkers := math.Ceil(float64(m.max-current) / 2)
-					log.Infof("adding %d new workers", int(newWorkers))
+					m.logging.Infof("adding %d new workers", int(newWorkers))
 					m.addWorkers(int(newWorkers))
 				}
 			case <-m.context.Done():
-				log.Warnf("manager stopped before task %s could be scheduled",
+				m.logging.Warningf("manager stopped before task %s could be scheduled",
 					newTask.Name())
 				return
 			case worker := <-m.taskQueue:
@@ -180,10 +180,10 @@ func (m *TaskManager) Go(newTask Task) (<-chan struct{}, error) {
 				default:
 				}
 				if !open {
-					log.Warnf("worker was timed out, ignoring...")
+					m.logging.Warningf("worker was timed out, ignoring...")
 					break
 				}
-				log.Infof("dispatching task %s to worker", newTask.Name())
+				m.logging.Infof("dispatching task %s to worker", newTask.Name())
 				worker <- newTask
 				return
 			}
@@ -245,7 +245,7 @@ func (m *TaskManager) TaskStatus() (res map[string]TaskStatus) {
 
 // Stop is used to stop all running routines
 func (m *TaskManager) Stop(ctx context.Context) error {
-	log.Info("stopping taskmanager")
+	m.logging.Info("stopping taskmanager")
 	m.cancel()
 	m.stopped.Store(true)
 	stopped := make(chan struct{})
@@ -281,12 +281,12 @@ func (m *TaskManager) updateState(wId int32, name string, status WorkerStatus) {
 }
 
 func (m *TaskManager) handleStart(id int32, tName string) {
-	log.Infof("worker %d started running task %s", id, tName)
+	m.logging.Infof("worker %d started running task %s", id, tName)
 	m.updateState(id, tName, Running)
 }
 
 func (m *TaskManager) handleError(id int32, t Task, err error) {
-	log.Infof("worker %d had error %s running task %s", id, err.Error(), t.Name())
+	m.logging.Infof("worker %d had error %s running task %s", id, err.Error(), t.Name())
 	m.updateState(id, "idle", Waiting)
 	if r, ok := t.(RestartableTask); ok && !errors.Is(err, context.Canceled) {
 		if r.Restart(m.context, err) {
@@ -301,10 +301,10 @@ func (m *TaskManager) handleError(id int32, t Task, err error) {
 			m.tMpMutex.Unlock()
 			_, e := m.Go(t)
 			if e == nil {
-				log.Infof("restarted task %s on err %s", t.Name(), err.Error())
+				m.logging.Infof("restarted task %s on err %s", t.Name(), err.Error())
 				return
 			} else {
-				log.Errorf("failed restarting task err: %s", e.Error())
+				m.logging.Errorf("failed restarting task err: %s", e.Error())
 			}
 		}
 	}
@@ -314,7 +314,7 @@ func (m *TaskManager) handleError(id int32, t Task, err error) {
 }
 
 func (m *TaskManager) handleSuccess(id int32, t Task) {
-	log.Infof("worker %d successfully completed task %s", id, t.Name())
+	m.logging.Infof("worker %d successfully completed task %s", id, t.Name())
 	m.updateState(id, "idle", Waiting)
 	m.tMpMutex.Lock()
 	delete(m.taskMap, t.Name())
@@ -322,9 +322,9 @@ func (m *TaskManager) handleSuccess(id int32, t Task) {
 }
 
 func (m *TaskManager) handleWorkerTimeout(w *worker) {
-	log.Infof("timed out Worker %d", w.id)
+	m.logging.Infof("timed out Worker %d", w.id)
 	if int(m.running.Load()) <= m.min {
-		log.Info("worker count going below threshold. Restarting worker")
+		m.logging.Info("worker count going below threshold. Restarting worker")
 		w.start()
 		return
 	}
@@ -336,7 +336,7 @@ func (m *TaskManager) handleWorkerTimeout(w *worker) {
 }
 
 func (m *TaskManager) handleWorkerStop(w *worker) {
-	log.Infof("removing worker %d", w.id)
+	m.logging.Infof("removing worker %d", w.id)
 	m.running.Dec()
 	m.wg.Done()
 	m.wmMutex.Lock()
