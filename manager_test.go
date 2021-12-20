@@ -12,43 +12,19 @@ import (
 
 type mockLogging struct{}
 
-func (m mockLogging) Tracef(format string, args ...interface{}) {
+func (mockLogging) Infof(format string, args ...interface{}) {
 	log.Printf(format, args...)
 }
 
-func (m mockLogging) Trace(args ...interface{}) {
+func (mockLogging) Info(args ...interface{}) {
 	log.Println(args...)
 }
 
-func (m mockLogging) Debugf(format string, args ...interface{}) {
+func (mockLogging) Errorf(format string, args ...interface{}) {
 	log.Printf(format, args...)
 }
 
-func (m mockLogging) Debug(args ...interface{}) {
-	log.Println(args...)
-}
-
-func (m mockLogging) Infof(format string, args ...interface{}) {
-	log.Printf(format, args...)
-}
-
-func (m mockLogging) Info(args ...interface{}) {
-	log.Println(args...)
-}
-
-func (m mockLogging) Warningf(format string, args ...interface{}) {
-	log.Printf(format, args...)
-}
-
-func (m mockLogging) Warning(args ...interface{}) {
-	log.Println(args...)
-}
-
-func (m mockLogging) Errorf(format string, args ...interface{}) {
-	log.Printf(format, args...)
-}
-
-func (m mockLogging) Error(args ...interface{}) {
+func (mockLogging) Error(args ...interface{}) {
 	log.Println(args...)
 }
 

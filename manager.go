@@ -30,7 +30,7 @@ type TaskWithProgress interface {
 	Description() string
 }
 
-// RestarableTask interface can be implemented to restart tasks on failures. The error
+// RestartableTask interface can be implemented to restart tasks on failures. The error
 // passed to Restart is the error with which the task failed previously. Appropriate
 // handling can be done based on that. If restart returns true, the task is enqueued
 // with the manager again.
@@ -95,13 +95,13 @@ type TaskManager struct {
 
 type noLogger struct{}
 
-func (n noLogger) Infof(format string, args ...interface{}) {}
+func (noLogger) Infof(format string, args ...interface{}) {}
 
-func (n noLogger) Info(args ...interface{}) {}
+func (noLogger) Info(args ...interface{}) {}
 
-func (n noLogger) Errorf(format string, args ...interface{}) {}
+func (noLogger) Errorf(format string, args ...interface{}) {}
 
-func (n noLogger) Error(args ...interface{}) {}
+func (noLogger) Error(args ...interface{}) {}
 
 // New creates a new taskmanager instance. minCount determines the minimum no of
 // workers and maxCount determines the maximum worker count. timeout is used to determine
