@@ -3,12 +3,30 @@ package taskmanager_test
 import (
 	"context"
 	"errors"
+	"log"
 	"testing"
 	"time"
 
-	logging "github.com/ipfs/go-log/v2"
 	"github.com/plexsysio/taskmanager"
 )
+
+type mockLogging struct{}
+
+func (mockLogging) Infof(format string, args ...interface{}) {
+	log.Printf(format, args...)
+}
+
+func (mockLogging) Info(args ...interface{}) {
+	log.Println(args...)
+}
+
+func (mockLogging) Errorf(format string, args ...interface{}) {
+	log.Printf(format, args...)
+}
+
+func (mockLogging) Error(args ...interface{}) {
+	log.Println(args...)
+}
 
 type testTask struct {
 	name      string
@@ -74,10 +92,10 @@ func (t *testTask) Description() string {
 }
 
 func TestTaskManager(t *testing.T) {
-	_ = logging.SetLogLevel("taskmanager", "Debug")
+	ml := &mockLogging{}
 
 	t.Run("initial state", func(t *testing.T) {
-		tm := taskmanager.New(1, 3, time.Second)
+		tm := taskmanager.New(1, 3, time.Second, ml)
 		defer func() {
 			_ = tm.Stop(context.Background())
 		}()
@@ -94,7 +112,7 @@ func TestTaskManager(t *testing.T) {
 	}
 
 	t.Run("add tasks", func(t *testing.T) {
-		tm := taskmanager.New(1, 3, time.Second)
+		tm := taskmanager.New(1, 3, time.Second, ml)
 		defer func() {
 			_ = tm.Stop(context.Background())
 		}()
@@ -122,7 +140,7 @@ func TestTaskManager(t *testing.T) {
 	})
 
 	t.Run("add more than capacity", func(t *testing.T) {
-		tm := taskmanager.New(1, 3, time.Second)
+		tm := taskmanager.New(1, 3, time.Second, ml)
 		defer func() {
 			_ = tm.Stop(context.Background())
 		}()
@@ -158,7 +176,7 @@ func TestTaskManager(t *testing.T) {
 	})
 
 	t.Run("fail duplicate", func(t *testing.T) {
-		tm := taskmanager.New(1, 3, time.Second)
+		tm := taskmanager.New(1, 3, time.Second, ml)
 		defer func() {
 			_ = tm.Stop(context.Background())
 		}()
@@ -177,7 +195,7 @@ func TestTaskManager(t *testing.T) {
 	})
 
 	t.Run("restart on error", func(t *testing.T) {
-		tm := taskmanager.New(1, 3, time.Second)
+		tm := taskmanager.New(1, 3, time.Second, ml)
 		defer func() {
 			_ = tm.Stop(context.Background())
 		}()
@@ -204,7 +222,7 @@ func TestTaskManager(t *testing.T) {
 	})
 
 	t.Run("recover and restart on panic", func(t *testing.T) {
-		tm := taskmanager.New(1, 3, time.Second)
+		tm := taskmanager.New(1, 3, time.Second, ml)
 		defer func() {
 			_ = tm.Stop(context.Background())
 		}()
@@ -229,7 +247,7 @@ func TestTaskManager(t *testing.T) {
 	})
 
 	t.Run("with progress", func(t *testing.T) {
-		tm := taskmanager.New(1, 3, time.Second)
+		tm := taskmanager.New(1, 3, time.Second, ml)
 		defer func() {
 			_ = tm.Stop(context.Background())
 		}()
@@ -259,7 +277,7 @@ func TestTaskManager(t *testing.T) {
 	})
 
 	t.Run("closure", func(t *testing.T) {
-		tm := taskmanager.New(1, 3, time.Second)
+		tm := taskmanager.New(1, 3, time.Second, ml)
 		defer func() {
 			_ = tm.Stop(context.Background())
 		}()
@@ -285,7 +303,7 @@ func TestTaskManager(t *testing.T) {
 	})
 
 	t.Run("timeout", func(t *testing.T) {
-		tm := taskmanager.New(1, 3, time.Second)
+		tm := taskmanager.New(1, 3, time.Second, ml)
 		defer func() {
 			_ = tm.Stop(context.Background())
 		}()
@@ -323,7 +341,7 @@ func TestTaskManager(t *testing.T) {
 	})
 
 	t.Run("stop", func(t *testing.T) {
-		tm := taskmanager.New(1, 3, time.Second)
+		tm := taskmanager.New(1, 3, time.Second, ml)
 
 		t1 := newTestTask("1")
 		goWork(t1, tm)
