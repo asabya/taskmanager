@@ -3,6 +3,7 @@ package taskmanager
 import (
 	"context"
 	"errors"
+	"fmt"
 	"runtime/debug"
 	"time"
 )
@@ -35,9 +36,9 @@ func (w *worker) start() {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				w.logger.Error("PANIC in TaskManager worker")
+				w.logger.Error(fmt.Errorf("PANIC in TaskManager worker"), "PANIC in TaskManager worker")
 				debug.PrintStack()
-				w.logger.Error("recovered in worker", w.id)
+				w.logger.Error(fmt.Errorf("recovered in worker"), "recovered in worker", "worker_id", w.id)
 				if w.currTask != nil {
 					w.mgr.handleError(w.id, w.currTask, errors.New("Panic"))
 				}
@@ -61,7 +62,7 @@ func (w *worker) start() {
 				w.currTask = task
 				err := task.Execute(w.context)
 				if err != nil {
-					w.logger.Error("worker : Failed with error :", w.id, err.Error())
+					w.logger.Error(err, "worker : Failed with error :", "worker_id", w.id)
 					w.mgr.handleError(w.id, task, err)
 				} else {
 					w.logger.Info("worker : Task finished successfully", w.id)
