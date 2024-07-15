@@ -7,6 +7,7 @@ package taskmanager
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"sync"
 	"time"
@@ -97,7 +98,7 @@ type noLogger struct{}
 
 func (noLogger) Info(msg string, args ...interface{}) {}
 
-func (noLogger) Error(msg string, args ...interface{}) {}
+func (noLogger) Error(err error, msg string, args ...interface{}) {}
 
 // New creates a new taskmanager instance. minCount determines the minimum no of
 // workers and maxCount determines the maximum worker count. timeout is used to determine
@@ -151,7 +152,7 @@ func (m *TaskManager) Go(newTask Task) (<-chan struct{}, error) {
 	curr, exists := m.taskMap[newTask.Name()]
 	if exists && curr.Status != Restarted {
 		m.tMpMutex.Unlock()
-		m.logger.Error("trying to enqueue same task. Not allowed.")
+		m.logger.Error(fmt.Errorf("trying to enqueue same task. Not allowed"), "trying to enqueue same task. Not allowed.")
 		return nil, ErrAlreadyExists
 	}
 	restarts := 0
@@ -313,7 +314,7 @@ func (m *TaskManager) handleError(id int32, t Task, err error) {
 				m.logger.Info("restarted task on err", t.Name(), err.Error())
 				return
 			} else {
-				m.logger.Error("failed restarting task err:", e.Error())
+				m.logger.Error(e, "failed restarting task err:")
 			}
 		}
 	}

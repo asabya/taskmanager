@@ -18,8 +18,8 @@ func (mockLogging) Info(msg string, args ...interface{}) {
 	log.Println(args...)
 }
 
-func (mockLogging) Error(msg string, args ...interface{}) {
-	log.Print(msg)
+func (mockLogging) Error(err error, msg string, args ...interface{}) {
+	log.Print(err, msg)
 	log.Println(args...)
 }
 
