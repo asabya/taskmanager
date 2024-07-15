@@ -35,9 +35,9 @@ func (w *worker) start() {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				w.logger.Errorf("PANIC in TaskManager worker")
+				w.logger.Error("PANIC in TaskManager worker")
 				debug.PrintStack()
-				w.logger.Errorf("recovered in worker %d", w.id)
+				w.logger.Error("recovered in worker", w.id)
 				if w.currTask != nil {
 					w.mgr.handleError(w.id, w.currTask, errors.New("Panic"))
 				}
@@ -50,28 +50,28 @@ func (w *worker) start() {
 		for {
 			select {
 			case <-w.context.Done():
-				w.logger.Infof("worker %d : stopping", w.id)
+				w.logger.Info("worker : stopping", w.id)
 				return
 			case w.taskQueue <- w.task:
 			}
 			select {
 			case task := <-w.task:
-				w.logger.Infof("worker %d : Received work request", w.id)
+				w.logger.Info("worker: Received work request", w.id)
 				w.mgr.handleStart(w.id, task.Name())
 				w.currTask = task
 				err := task.Execute(w.context)
 				if err != nil {
-					w.logger.Errorf("worker %d : Failed with error : %s", w.id, err.Error())
+					w.logger.Error("worker : Failed with error :", w.id, err.Error())
 					w.mgr.handleError(w.id, task, err)
 				} else {
-					w.logger.Infof("worker %d : Task finished successfully", w.id)
+					w.logger.Info("worker : Task finished successfully", w.id)
 					w.mgr.handleSuccess(w.id, task)
 				}
 			case <-w.context.Done():
-				w.logger.Infof("worker %d : stopping", w.id)
+				w.logger.Info("worker : stopping", w.id)
 				return
 			case <-time.After(w.mgr.workerTimeout):
-				w.logger.Infof("worker %d : idle timeout", w.id)
+				w.logger.Info("worker : idle timeout", w.id)
 				timedOut = true
 				close(w.task)
 				w.mgr.handleWorkerTimeout(w)

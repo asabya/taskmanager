@@ -7,24 +7,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/plexsysio/taskmanager"
+	"github.com/asabya/taskmanager"
+	"go.uber.org/goleak"
 )
 
 type mockLogging struct{}
 
-func (mockLogging) Infof(format string, args ...interface{}) {
-	log.Printf(format, args...)
-}
-
-func (mockLogging) Info(args ...interface{}) {
+func (mockLogging) Info(msg string, args ...interface{}) {
+	log.Print(msg)
 	log.Println(args...)
 }
 
-func (mockLogging) Errorf(format string, args ...interface{}) {
-	log.Printf(format, args...)
-}
-
-func (mockLogging) Error(args ...interface{}) {
+func (mockLogging) Error(msg string, args ...interface{}) {
+	log.Print(msg)
 	log.Println(args...)
 }
 
@@ -368,6 +363,10 @@ func TestTaskManager(t *testing.T) {
 		}
 		verifyWorkerCount(t, tm, 0)
 	})
+}
+
+func TestMain(m *testing.M) {
+	goleak.VerifyTestMain(m)
 }
 
 func verifyAllIdle(t *testing.T, tm *taskmanager.TaskManager) {

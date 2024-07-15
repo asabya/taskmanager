@@ -95,13 +95,9 @@ type TaskManager struct {
 
 type noLogger struct{}
 
-func (noLogger) Infof(format string, args ...interface{}) {}
+func (noLogger) Info(msg string, args ...interface{}) {}
 
-func (noLogger) Info(args ...interface{}) {}
-
-func (noLogger) Errorf(format string, args ...interface{}) {}
-
-func (noLogger) Error(args ...interface{}) {}
+func (noLogger) Error(msg string, args ...interface{}) {}
 
 // New creates a new taskmanager instance. minCount determines the minimum no of
 // workers and maxCount determines the maximum worker count. timeout is used to determine
@@ -134,7 +130,7 @@ func (m *TaskManager) addWorkers(count int) {
 			return
 		}
 		currentId := m.workerId.Inc()
-		m.logger.Infof("starting worker : %d", currentId)
+		m.logger.Info("starting worker :", currentId)
 		m.wmMutex.Lock()
 		m.workerMap[currentId] = WorkerInfo{TaskName: "idle", Status: Waiting}
 		m.wmMutex.Unlock()
@@ -155,7 +151,7 @@ func (m *TaskManager) Go(newTask Task) (<-chan struct{}, error) {
 	curr, exists := m.taskMap[newTask.Name()]
 	if exists && curr.Status != Restarted {
 		m.tMpMutex.Unlock()
-		m.logger.Errorf("trying to enqueue same task. Not allowed.")
+		m.logger.Error("trying to enqueue same task. Not allowed.")
 		return nil, ErrAlreadyExists
 	}
 	restarts := 0
@@ -179,11 +175,11 @@ func (m *TaskManager) Go(newTask Task) (<-chan struct{}, error) {
 				current := int(m.running.Load())
 				if m.max > current {
 					newWorkers := math.Ceil(float64(m.max-current) / 2)
-					m.logger.Infof("adding %d new workers", int(newWorkers))
+					m.logger.Info("adding new workers: ", int(newWorkers))
 					m.addWorkers(int(newWorkers))
 				}
 			case <-m.context.Done():
-				m.logger.Infof("manager stopped before task %s could be scheduled",
+				m.logger.Info("manager stopped before task could be scheduled: ",
 					newTask.Name())
 				return
 			case worker := <-m.taskQueue:
@@ -193,10 +189,10 @@ func (m *TaskManager) Go(newTask Task) (<-chan struct{}, error) {
 				default:
 				}
 				if !open {
-					m.logger.Infof("worker was timed out, ignoring...")
+					m.logger.Info("worker was timed out, ignoring...")
 					break
 				}
-				m.logger.Infof("dispatching task %s to worker", newTask.Name())
+				m.logger.Info("dispatching task to worker", newTask.Name())
 				worker <- newTask
 				return
 			}
@@ -294,12 +290,12 @@ func (m *TaskManager) updateState(wId int32, name string, status WorkerStatus) {
 }
 
 func (m *TaskManager) handleStart(id int32, tName string) {
-	m.logger.Infof("worker %d started running task %s", id, tName)
+	m.logger.Info("worker started running task", id, tName)
 	m.updateState(id, tName, Running)
 }
 
 func (m *TaskManager) handleError(id int32, t Task, err error) {
-	m.logger.Infof("worker %d had error %s running task %s", id, err.Error(), t.Name())
+	m.logger.Info("worker had error running task", id, err.Error(), t.Name())
 	m.updateState(id, "idle", Waiting)
 	if r, ok := t.(RestartableTask); ok && !errors.Is(err, context.Canceled) {
 		if r.Restart(m.context, err) {
@@ -314,10 +310,10 @@ func (m *TaskManager) handleError(id int32, t Task, err error) {
 			m.tMpMutex.Unlock()
 			_, e := m.Go(t)
 			if e == nil {
-				m.logger.Infof("restarted task %s on err %s", t.Name(), err.Error())
+				m.logger.Info("restarted task on err", t.Name(), err.Error())
 				return
 			} else {
-				m.logger.Errorf("failed restarting task err: %s", e.Error())
+				m.logger.Error("failed restarting task err:", e.Error())
 			}
 		}
 	}
@@ -327,7 +323,7 @@ func (m *TaskManager) handleError(id int32, t Task, err error) {
 }
 
 func (m *TaskManager) handleSuccess(id int32, t Task) {
-	m.logger.Infof("worker %d successfully completed task %s", id, t.Name())
+	m.logger.Info("worker successfully completed task", id, t.Name())
 	m.updateState(id, "idle", Waiting)
 	m.tMpMutex.Lock()
 	delete(m.taskMap, t.Name())
@@ -335,7 +331,7 @@ func (m *TaskManager) handleSuccess(id int32, t Task) {
 }
 
 func (m *TaskManager) handleWorkerTimeout(w *worker) {
-	m.logger.Infof("timed out Worker %d", w.id)
+	m.logger.Info("timed out Worker", w.id)
 	if int(m.running.Load()) <= m.min {
 		m.logger.Info("worker count going below threshold. Restarting worker")
 		w.start()
@@ -349,7 +345,7 @@ func (m *TaskManager) handleWorkerTimeout(w *worker) {
 }
 
 func (m *TaskManager) handleWorkerStop(w *worker) {
-	m.logger.Infof("removing worker %d", w.id)
+	m.logger.Info("removing worker", w.id)
 	m.running.Dec()
 	m.wg.Done()
 	m.wmMutex.Lock()
