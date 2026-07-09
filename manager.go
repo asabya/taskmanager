@@ -76,7 +76,7 @@ type WorkerInfo struct {
 
 // TaskManager implements the public API for taskmanager
 type TaskManager struct {
-	taskQueue     chan chan Task
+	taskQueue     chan *workRequest
 	wmMutex       sync.Mutex
 	workerMap     map[int32]WorkerInfo
 	tMpMutex      sync.Mutex
@@ -109,7 +109,7 @@ func New(minCount, maxCount int, timeout time.Duration, log Logger) *TaskManager
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	manager := &TaskManager{
-		taskQueue:     make(chan chan Task, maxCount),
+		taskQueue:     make(chan *workRequest, maxCount),
 		workerMap:     make(map[int32]WorkerInfo, maxCount),
 		taskMap:       make(map[string]TaskStatus),
 		context:       ctx,
@@ -125,18 +125,29 @@ func New(minCount, maxCount int, timeout time.Duration, log Logger) *TaskManager
 }
 
 func (m *TaskManager) addWorkers(count int) {
-	for i := 0; i < count && !m.stopped.Load(); i++ {
+	for i := 0; i < count; i++ {
+		// Reserve the worker slot under wmMutex so that the stopped check, the
+		// max-count check and the wg.Add happen atomically. Stop() flips
+		// stopped under the same lock before calling wg.Wait(), which prevents
+		// a "WaitGroup is reused before previous Wait has returned" panic, and
+		// gating the running check with the increment prevents overshooting max.
+		m.wmMutex.Lock()
+		if m.stopped.Load() {
+			m.wmMutex.Unlock()
+			return
+		}
 		if int(m.running.Load()) >= m.max {
+			m.wmMutex.Unlock()
 			m.logger.Info("reached max allowed workers while adding")
 			return
 		}
 		currentId := m.workerId.Inc()
-		m.logger.Info("starting worker :", currentId)
-		m.wmMutex.Lock()
 		m.workerMap[currentId] = WorkerInfo{TaskName: "idle", Status: Waiting}
-		m.wmMutex.Unlock()
 		m.running.Inc()
 		m.wg.Add(1)
+		m.wmMutex.Unlock()
+
+		m.logger.Info("starting worker :", currentId)
 		w := newWorker(currentId, m, m.logger)
 		w.start()
 	}
@@ -183,18 +194,16 @@ func (m *TaskManager) Go(newTask Task) (<-chan struct{}, error) {
 				m.logger.Info("manager stopped before task could be scheduled: ",
 					newTask.Name())
 				return
-			case worker := <-m.taskQueue:
-				open := true
-				select {
-				case _, open = <-worker:
-				default:
-				}
-				if !open {
+			case req := <-m.taskQueue:
+				if !req.state.CompareAndSwap(reqPending, reqClaimed) {
+					// worker withdrew this offer (idle timeout / shutdown)
 					m.logger.Info("worker was timed out, ignoring...")
 					break
 				}
+				// The claim guarantees the worker is still listening on reply,
+				// so this send can never block indefinitely or panic.
 				m.logger.Info("dispatching task to worker", newTask.Name())
-				worker <- newTask
+				req.reply <- newTask
 				return
 			}
 		}
@@ -234,10 +243,20 @@ func (m *TaskManager) Status() (res map[int32]WorkerInfo) {
 
 // TaskStatus is used to obtain status of tasks enqueued
 func (m *TaskManager) TaskStatus() (res map[string]TaskStatus) {
+	// Snapshot the task map (including the task reference) under the lock,
+	// then release it before calling into user code below. Progress() and
+	// Description() are user-implemented and may block; calling them while
+	// holding tMpMutex would stall every other task-state update
+	// (updateState/handleError/handleSuccess all take tMpMutex).
 	m.tMpMutex.Lock()
-	defer m.tMpMutex.Unlock()
-	res = make(map[string]TaskStatus)
+	snapshot := make(map[string]TaskStatus, len(m.taskMap))
 	for k, v := range m.taskMap {
+		snapshot[k] = v
+	}
+	m.tMpMutex.Unlock()
+
+	res = make(map[string]TaskStatus)
+	for k, v := range snapshot {
 		status := TaskStatus{
 			Name:     v.Name,
 			Worker:   v.Worker,
@@ -257,7 +276,13 @@ func (m *TaskManager) TaskStatus() (res map[string]TaskStatus) {
 func (m *TaskManager) Stop(ctx context.Context) error {
 	m.logger.Info("stopping taskmanager")
 	m.cancel()
+	// Set stopped under wmMutex so it is ordered against addWorkers' guarded
+	// wg.Add: any addWorkers that already passed its check has finished its
+	// Add before this returns, and any that runs afterwards observes stopped
+	// and skips. wg.Wait therefore never races with a concurrent wg.Add.
+	m.wmMutex.Lock()
 	m.stopped.Store(true)
+	m.wmMutex.Unlock()
 	stopped := make(chan struct{})
 	go func() {
 		defer close(stopped)
@@ -347,6 +372,26 @@ func (m *TaskManager) handleWorkerTimeout(w *worker) {
 
 func (m *TaskManager) handleWorkerStop(w *worker) {
 	m.logger.Info("removing worker", w.id)
+	m.running.Dec()
+	m.wg.Done()
+	m.wmMutex.Lock()
+	delete(m.workerMap, w.id)
+	m.wmMutex.Unlock()
+}
+
+// handleWorkerPanic is invoked when a worker's goroutine recovers from a panic.
+// It mirrors handleWorkerTimeout: if the pool would otherwise drop below min,
+// the worker is restarted in place, keeping the running count and skipping
+// wg.Done. Restarting is skipped while the manager is stopping, since that
+// would keep the WaitGroup from ever reaching zero and Stop's wg.Wait would
+// never return.
+func (m *TaskManager) handleWorkerPanic(w *worker) {
+	m.logger.Info("worker panicked", w.id)
+	if !m.stopped.Load() && int(m.running.Load()) <= m.min {
+		m.logger.Info("worker count going below threshold. Restarting worker")
+		w.start()
+		return
+	}
 	m.running.Dec()
 	m.wg.Done()
 	m.wmMutex.Lock()
