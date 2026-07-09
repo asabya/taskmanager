@@ -1,4 +1,4 @@
-# taskmanager [![Go](https://github.com/plexsysio/taskmanager/workflows/Go/badge.svg)](https://github.com/plexsysio/taskmanager/actions) [![Go Reference](https://pkg.go.dev/badge/github.com/plexsysio/taskmanager.svg)](https://pkg.go.dev/github.com/plexsysio/taskmanager) [![Coverage Status](https://coveralls.io/repos/github/plexsysio/taskmanager/badge.svg?branch=main)](https://coveralls.io/github/plexsysio/taskmanager?branch=main)
+# taskmanager [![Go](https://github.com/asabya/taskmanager/workflows/Go/badge.svg)](https://github.com/asabya/taskmanager/actions) [![Go Reference](https://pkg.go.dev/badge/github.com/asabya/taskmanager.svg)](https://pkg.go.dev/github.com/asabya/taskmanager) [![Coverage Status](https://coveralls.io/repos/github/asabya/taskmanager/badge.svg?branch=main)](https://coveralls.io/github/asabya/taskmanager?branch=main)
 
 Async task manager. Tasks can easily be customized and executed asynchronously on
 the next available worker.
@@ -14,12 +14,12 @@ place.
 `taskmanager` works like a regular Go module:
 
 ```
-> go get github.com/plexsysio/taskmanager
+> go get github.com/asabya/taskmanager
 ```
 
 ## Usage
 ```
-import "github.com/plexsysio/taskmanager"
+import "github.com/asabya/taskmanager"
 
 type exampleTask struct {}
 
@@ -41,7 +41,8 @@ func (e *exampleTask) Execute(ctx context.Context) error {
 
 func main() {
 
-   tm := taskmanager.New(1, 100, time.Second*15)
+   // Last argument is a Logger implementation; nil falls back to a no-op logger
+   tm := taskmanager.New(1, 100, time.Second*15, nil)
    t := &exampleTask{}
 
    sched, err := tm.Go(t)
@@ -56,7 +57,7 @@ func main() {
 ```
 Closures can also be scheduled
 ```
-   fSched, err := tm.GoFunc(func(ctx context.Context) error {
+   fSched, err := tm.GoFunc("exampleClosure", func(ctx context.Context) error {
       for {
          select {
          case <-ctx.Done():
@@ -74,7 +75,7 @@ Closures can also be scheduled
 
    // Stop will wait for all routines to stop. Context can be passed here to
    // ensure timeout in Stop
-   ctx, _ := context.WithTimeout(time.Second)
+   ctx, _ := context.WithTimeout(context.Background(), time.Second)
    err = tm.Stop(ctx)
    if err != nil {
       fmt.Printf("failed stopping %s\n", err.Error())
